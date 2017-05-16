@@ -1007,6 +1007,10 @@ namespace SharpGen.Parser
         /// <returns>A C++ struct parsed</returns>
         private CppStruct ParseStructOrUnion(XElement xElement, CppElement cppParent = null, int innerAnonymousIndex = 0)
         {
+            var cppStruct = xElement.Annotation<CppStruct>();
+            if (cppStruct != null)
+                return cppStruct;
+
             // Build struct name directly from the struct name or based on the parent
             var structName = xElement.AttributeValue("name") ?? "";
             if (cppParent != null)
@@ -1018,7 +1022,8 @@ namespace SharpGen.Parser
             }
 
             // Create struct
-            var cppStruct = new CppStruct { Name = structName };
+            cppStruct = new CppStruct { Name = structName };
+            xElement.AddAnnotation(cppStruct);
             bool isUnion = (xElement.Name.LocalName == CastXml.TagUnion);
 
             // Get align from structure
@@ -1034,6 +1039,24 @@ namespace SharpGen.Parser
             // Enter struct/union description
             Logger.PushContext("{0}:[{1}]", xElement.Name.LocalName, cppStruct.Name);
 
+            var basesValue = xElement.AttributeValue("bases");
+            var bases = basesValue != null ? basesValue.Split(' ') : Enumerable.Empty<string>();
+            foreach (var xElementBaseId in bases)
+            {
+                if (string.IsNullOrEmpty(xElementBaseId))
+                    continue;
+
+                var xElementBase = _mapIdToXElement[xElementBaseId];
+                string baseTypeName = xElementBase.AttributeValue("name");
+                string baseTypeFile = _mapIdToXElement[xElementBase.AttributeValue("file")].AttributeValue("name");
+
+                CppStruct cppStructBase = null;
+                Logger.RunInContext("Base", () => { cppStructBase = ParseStructOrUnion(xElementBase); });
+
+                if (string.IsNullOrEmpty(cppStructBase.ParentName))
+                    cppStruct.ParentName = cppStructBase.Name;
+            }
+            
             // Parse all fields
             int fieldOffset = 0;
             int innerStructCount = 0;

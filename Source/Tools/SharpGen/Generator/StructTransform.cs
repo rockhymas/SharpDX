@@ -94,53 +94,66 @@ namespace SharpGen.Generator
             if (csStruct.IsFullyMapped)
                 return;
 
-                // Set IsFullyMappy in order to avoid recursive mapping
-                csStruct.IsFullyMapped = true;
+            // Set IsFullyMappy in order to avoid recursive mapping
+            csStruct.IsFullyMapped = true;
 
-                // Get the associated CppStruct and CSharpTag
-                var cppStruct = (CppStruct)csStruct.CppElement;
-                bool hasMarshalType = csStruct.HasMarshalType;
+            // Get the associated CppStruct and CSharpTag
+            var cppStruct = (CppStruct)csStruct.CppElement;
+            bool hasMarshalType = csStruct.HasMarshalType;
 
-                // If this structure need to me moved to another container, move it now
-                foreach (var keyValuePair in _mapMoveStructToInner)
+            // If this structure need to me moved to another container, move it now
+            foreach (var keyValuePair in _mapMoveStructToInner)
+            {
+                if (keyValuePair.Key.Match(csStruct.CppElementName).Success)
                 {
-                    if (keyValuePair.Key.Match(csStruct.CppElementName).Success)
-                    {
-                        string cppName = keyValuePair.Key.Replace(csStruct.CppElementName, keyValuePair.Value);
-                        var destSharpStruct = (CsStruct)Manager.FindBindType(cppName);
-                        // Remove the struct from his container
-                        csStruct.Parent.Remove(csStruct);
-                        // Add this struct to the new container struct
-                        destSharpStruct.Add(csStruct);
-                    }
+                    string cppName = keyValuePair.Key.Replace(csStruct.CppElementName, keyValuePair.Value);
+                    var destSharpStruct = (CsStruct)Manager.FindBindType(cppName);
+                    // Remove the struct from his container
+                    csStruct.Parent.Remove(csStruct);
+                    // Add this struct to the new container struct
+                    destSharpStruct.Add(csStruct);
                 }
+            }
 
-                // Current offset of a field
-                int currentFieldAbsoluteOffset = 0;
+            // Current offset of a field
+            int currentFieldAbsoluteOffset = 0;
 
-                int fieldCount = cppStruct.IsEmpty ? 0 : cppStruct.Items.Count;
+            // Last field offset
+            int previousFieldOffsetIndex = -1;
+
+            // Size of the last field
+            int previousFieldSize = 0;
+
+            // 
+            int maxSizeOfField = 0;
+
+            bool isInUnion = false;
+
+            int cumulatedBitOffset = 0;
 
 
-                // Last field offset
-                int previousFieldOffsetIndex = -1;
+            var structs = new Stack<CppStruct>();
+            var currentStruct = cppStruct;
+            while (currentStruct != null && currentStruct.ParentName != currentStruct.Name)
+            {
+                Logger.Message("Current Struct: " + currentStruct.Name);
+                structs.Push(currentStruct);
+                currentStruct = Manager.FindBindType(currentStruct.ParentName)?.CppElement as CppStruct;
+            }
 
-                // Size of the last field
-                int previousFieldSize = 0;
+            while (structs.Count > 0)
+            {
+                currentStruct = structs.Pop();
 
-                // 
-                int maxSizeOfField = 0;
-
-                bool isInUnion = false;
-
-                int cumulatedBitOffset = 0;
+                int fieldCount = currentStruct.IsEmpty ? 0 : currentStruct.Items.Count;
 
                 // -------------------------------------------------------------------------------
                 // Iterate on all fields and perform mapping
                 // -------------------------------------------------------------------------------
                 for (int fieldIndex = 0; fieldIndex < fieldCount; fieldIndex++)
                 {
-                    var cppField = (CppField) cppStruct.Items[fieldIndex];
-                    Logger.RunInContext(cppField.ToString(), () =>  
+                    var cppField = (CppField)currentStruct.Items[fieldIndex];
+                    Logger.RunInContext(cppField.ToString(), () =>
                     {
                         var fieldStruct = Manager.GetCsType<CsField>(cppField, true);
                         csStruct.Add(fieldStruct);
@@ -196,9 +209,9 @@ namespace SharpGen.Generator
 
                         var nextFieldIndex = fieldIndex + 1;
                         if ((previousFieldOffsetIndex == cppField.Offset)
-                           || (nextFieldIndex < fieldCount && ((CppField)cppStruct.Items[nextFieldIndex]).Offset == cppField.Offset))
+                            || (nextFieldIndex < fieldCount && ((CppField)currentStruct.Items[nextFieldIndex]).Offset == cppField.Offset))
                         {
-                            if(previousFieldOffsetIndex != cppField.Offset)
+                            if (previousFieldOffsetIndex != cppField.Offset)
                             {
                                 maxSizeOfField = 0;
                             }
@@ -214,10 +227,11 @@ namespace SharpGen.Generator
                         previousFieldOffsetIndex = cppField.Offset;
                     });
                 }
+            }
 
             // In case of explicit layout, check that we can safely generate it on both x86 and x64 (in case of an union
             // using pointers, we can't)
-            if(csStruct.ExplicitLayout)
+            if (csStruct.ExplicitLayout)
             {
                 var fieldList = csStruct.Fields.ToList();
                 for(int i = 0; i < fieldList.Count; i++)
